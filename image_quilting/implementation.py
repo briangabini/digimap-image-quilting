@@ -24,14 +24,83 @@ class ImageQuilting_AlgorithmAssignment(ImageQuilting):
 
     # SCORE +1 for implementing load image
     def load_image(self, path: str) -> np.ndarray:
-        raise NotImplementedError()
+        image = imageio.imread(path)
+        image = image / 255.0
+        return image
 
     # SCORE +1 for implementing save image
     def save_image(self, path: str, image: np.ndarray):
-        raise NotImplementedError()
+        image *= 255
+        image = image.astype(np.uint8)
+        imageio.imwrite(path, image)
+        
+    def random_patch(
+        self, 
+        block_size: int, 
+        texture_height: int, 
+        texture_width: int
+    ) -> BoxIndeces:
+        
+        random_y = np.random.randint(0, texture_height - block_size)
+        random_x = np.random.randint(0, texture_width - block_size)
+        return BoxIndeces(
+            top=random_y,
+            bottom=random_y + block_size,
+            left=random_x,
+            right=random_x + block_size
+        )
+    
+    def random_best_patch(
+        self,
+        canvas_patch: np.ndarray,
+        canvas_indeces: BoxIndeces,
+        block_size: int,
+        block_overlap: int,
+        texture_height: int,
+        texture_width: int,
+    ):
+        errors = np.zeros((texture_height - block_size, texture_width - block_size))   
+        
+        for i in range(texture_height - block_size):
+            for j in range(texture_width - block_size):
+                texture_patch = self.texture_image[i:i + block_size, j:j + block_size]
+                error = self.compute_l2_overlap_diff(texture_patch, block_overlap, canvas_patch, canvas_indeces)
+                errors[i, j] = error 
+                
+        i, j = np.unravel_index(np.argmin(errors), errors.shape)
+        return BoxIndeces(
+            top=i,
+            bottom=i + block_size,
+            left=j,
+            right=j + block_size
+        )
+        
+    """ 
+        REFERENCES:
+        Used this github repo as reference: https://github.com/axu2/image-quilting
+    """
+    def compute_l2_overlap_diff(self, texture_patch, block_overlap, canvas_patch, canvas_indeces):
+        # Left
+        if canvas_indeces.top == 0:
+            return np.linalg.norm(canvas_patch[:, :block_overlap] - texture_patch[:, :block_overlap])
+
+        # Top
+        if canvas_indeces.left == 0:     
+            return np.linalg.norm(canvas_patch[:block_overlap, :] - texture_patch[:block_overlap, :])
+
+        # Left and Top
+        if canvas_indeces.left > 0 and canvas_indeces.top > 0:
+            error = np.linalg.norm(canvas_patch[:, :block_overlap] - texture_patch[:, :block_overlap])
+            error += np.linalg.norm(canvas_patch[:block_overlap, :] - texture_patch[:block_overlap, :])
+            error -= np.linalg.norm(canvas_patch[:block_overlap, :block_overlap] - texture_patch[:block_overlap, :block_overlap])
+            return error
 
     # SCORE +1 for finding the best matching patch using L2 similarity
     # SCORE +1 for using L2 similarity on the overlap areas only
+    """ 
+        REFERENCES:
+        https://www.digitalocean.com/community/tutorials/norm-of-vector-python - L2 Norm according to this is the Euclidean distance
+    """
     def find_matching_texture_patch_indeces(
         self,
         canvas_patch: np.ndarray,
@@ -40,7 +109,16 @@ class ImageQuilting_AlgorithmAssignment(ImageQuilting):
         block_size: int,
         block_overlap: int
     ) -> BoxIndeces:
-        return BoxIndeces(0, 0, 0, 0)
+        
+        texture_height, texture_width, _ = self.texture_image.shape
+        
+        # Initialize for the top left patch (first patch)
+        if canvas_indeces.top == 0 and canvas_indeces.left == 0:
+            return self.random_patch(block_size, texture_height, texture_width)
+        
+        else: 
+            return self.random_best_patch(canvas_patch, canvas_indeces, block_size, block_overlap, texture_height, texture_width)
+            
 
     # SCORE +1 for finding a 'cut' that minimizes the L2 error
     # SCORE +1 for correctly converting a 'cut' to a 'mask' (Hint: mask is binary)
@@ -57,6 +135,54 @@ class ImageQuilting_AlgorithmAssignment(ImageQuilting):
         block_size: int,
         block_overlap: int
     ) -> np.ndarray:
-        raise NotImplementedError()
+        # This implementation is random
+        texture_height, texture_width, num_channels = texture_patch.shape
+        mask = np.ones((texture_height, texture_width))
 
+        # Initialization topmost-leftmost patch
+        if canvas_indeces.top == 0 and canvas_indeces.left == 0:
+            return mask
+        
+        # Left overlap / Topmost patches
+        if canvas_indeces.top == 0:
+            path_index = np.random.randint(0, block_overlap)
+            for y in range(texture_height):
+                mask[y, :path_index] = 0
+
+                random_offset = np.random.choice([1, 0, -1])
+                path_index += random_offset
+                path_index = np.clip(path_index, 0, block_overlap - 1)
+
+            return mask
+
+        # Top overlap / Leftmost patches
+        if canvas_indeces.left == 0:
+            path_index = np.random.randint(0, block_overlap)
+            for x in range(texture_width):
+                mask[:path_index, x] = 0
+
+                random_offset = np.random.choice([1, 0, -1])
+                path_index += random_offset
+                path_index = np.clip(path_index, 0, block_overlap - 1)
+            return mask
+
+        # Left and Top overlap / The other patches
+        path_index = np.random.randint(0, block_overlap)
+        for y in range(texture_height):
+            mask[y, :path_index] = 0
+
+            random_offset = np.random.choice([1, 0, -1])
+            path_index += random_offset
+            path_index = np.clip(path_index, 0, block_overlap - 1)
+
+        path_index = np.random.randint(0, block_overlap)
+        for x in range(texture_width):
+            mask[:path_index, x] = 0
+
+            random_offset = np.random.choice([1, 0, -1])
+            path_index += random_offset
+            path_index = np.clip(path_index, 0, block_overlap - 1)
+
+        return mask
+    
     # SCORE +1 if there are no errors when running the entire algorithm
