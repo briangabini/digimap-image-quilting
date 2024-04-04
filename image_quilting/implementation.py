@@ -6,6 +6,7 @@ import scipy.ndimage as ndimage
 import PIL.Image as Image
 import imageio
 import os
+import heapq
 
 # SCORE -1 if you imported additional modules
 
@@ -24,9 +25,7 @@ class ImageQuilting_AlgorithmAssignment(ImageQuilting):
 
     # SCORE +1 for implementing load image
     def load_image(self, path: str) -> np.ndarray:
-        image = imageio.imread(path)
-        image = image / 255.0
-        return image
+        return np.array(imageio.imread(path)) / 255
 
     # SCORE +1 for implementing save image
     def save_image(self, path: str, image: np.ndarray):
@@ -75,25 +74,87 @@ class ImageQuilting_AlgorithmAssignment(ImageQuilting):
             right=j + block_size
         )
         
+    def min_cut_path(self, errors):
+        # dijkstra's algorithm vertical
+        pq = [(error, [i]) for i, error in enumerate(errors[0])]
+        heapq.heapify(pq)
+
+        h, w = errors.shape
+        seen = set()
+
+        while pq:
+            error, path = heapq.heappop(pq)
+            curDepth = len(path)
+            curIndex = path[-1]
+
+            if curDepth == h:
+                return path
+
+            for delta in -1, 0, 1:
+                nextIndex = curIndex + delta
+
+                if 0 <= nextIndex < w:
+                    if (curDepth, nextIndex) not in seen:
+                        cumError = error + errors[curDepth, nextIndex]
+                        heapq.heappush(pq, (cumError, path + [nextIndex]))
+                        seen.add((curDepth, nextIndex))
+        
+    def min_cut_patch(
+        self,
+        patch,
+        block_size,
+        block_overlap,
+        canvas_patch,
+        canvas_indeces
+    ):
+        patch = patch.copy()
+        dy, dx, _ = patch.shape
+        min_cut = np.zeros_like(patch, dtype=bool)
+        
+        if canvas_indeces.left > 0:
+            left = patch[:, :block_overlap] - canvas_patch[canvas_indeces.top:canvas_indeces.top+dy, canvas_indeces.left:canvas_indeces.left+block_overlap]
+            leftL2 = np.sum(left**2, axis=2)
+            for i, j in enumerate(self.min_cut_path(leftL2)):
+                min_cut[i, :j] = True
+                
+        if canvas_indeces.top > 0:
+            up = patch[:block_overlap, :] - canvas_patch[canvas_indeces.top:canvas_indeces.top+block_overlap, canvas_indeces.left:canvas_indeces.left+dx]
+            upL2 = np.sum(up**2, axis=2)
+            for j, i in enumerate(self.min_cut_path(upL2.T)):
+                min_cut[:i, j] = True
+                
+        np.copyto(patch, canvas_patch[canvas_indeces.top:canvas_indeces.top+dy, canvas_indeces.left:canvas_indeces.left+dx], where=min_cut)
+
+        return BoxIndeces(
+            top=canvas_indeces.top,
+            bottom=canvas_indeces.top + block_size,
+            left=canvas_indeces.left,
+            right=canvas_indeces.left + block_size
+        )
+        
     """ 
         REFERENCES:
         Used this github repo as reference: https://github.com/axu2/image-quilting
     """
     def compute_l2_overlap_diff(self, texture_patch, block_overlap, canvas_patch, canvas_indeces):
+        error = 0
+
         # Left
-        if canvas_indeces.top == 0:
-            return np.linalg.norm(canvas_patch[:, :block_overlap] - texture_patch[:, :block_overlap])
+        if canvas_indeces.left > 0:
+            left = texture_patch[:, :block_overlap] - canvas_patch[:, :block_overlap]
+            error += np.sum(left**2)
 
         # Top
-        if canvas_indeces.left == 0:     
-            return np.linalg.norm(canvas_patch[:block_overlap, :] - texture_patch[:block_overlap, :])
+        if canvas_indeces.top > 0:
+            up = texture_patch[:block_overlap, :] - canvas_patch[:block_overlap, :]
+            error += np.sum(up**2)
 
         # Left and Top
         if canvas_indeces.left > 0 and canvas_indeces.top > 0:
-            error = np.linalg.norm(canvas_patch[:, :block_overlap] - texture_patch[:, :block_overlap])
-            error += np.linalg.norm(canvas_patch[:block_overlap, :] - texture_patch[:block_overlap, :])
-            error -= np.linalg.norm(canvas_patch[:block_overlap, :block_overlap] - texture_patch[:block_overlap, :block_overlap])
-            return error
+            corner = texture_patch[:block_overlap, :block_overlap] - canvas_patch[:block_overlap, :block_overlap]
+            error -= np.sum(corner**2)
+
+        return error
 
     # SCORE +1 for finding the best matching patch using L2 similarity
     # SCORE +1 for using L2 similarity on the overlap areas only
@@ -117,7 +178,12 @@ class ImageQuilting_AlgorithmAssignment(ImageQuilting):
             return self.random_patch(block_size, texture_height, texture_width)
         
         else: 
-            return self.random_best_patch(canvas_patch, canvas_indeces, block_size, block_overlap, texture_height, texture_width)
+            patch_indeces = self.random_best_patch(canvas_patch, canvas_indeces, block_size, block_overlap, texture_height, texture_width)
+            patch = self.extract_patch(canvas, patch_indeces)
+            return self.min_cut_patch(patch, block_size, block_overlap, canvas, canvas_indeces)
+            
+            # return patch_indeces
+            
             
 
     # SCORE +1 for finding a 'cut' that minimizes the L2 error
